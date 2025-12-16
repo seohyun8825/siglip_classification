@@ -3,6 +3,7 @@ import os
 import json
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from datetime import datetime
 from typing import Dict, List
 import math
 
@@ -14,12 +15,14 @@ from transformers import (
     AutoModel,
     TrainingArguments,
     Trainer,
+    TrainerCallback,
 )
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from sklearn.metrics import accuracy_score, f1_score
+import json as _json
 
 
 ID2LABEL = {0: "normal", 1: "abnormal"}
@@ -152,6 +155,12 @@ def main():
         n_norm, n_abn = len(idx_norm), len(idx_abn)
         print(f"[train] Class counts before balance: normal={n_norm}, abnormal={n_abn}")
 
+        # Record pre-balance counts
+        sampling_meta = {
+            "mode": "balanced",
+            "before": {"normal": n_norm, "abnormal": n_abn, "total": n_norm + n_abn},
+        }
+
         if n_norm != n_abn and n_norm > 0 and n_abn > 0:
             # Determine majority/minority
             if n_norm > n_abn:
@@ -207,8 +216,35 @@ def main():
             print(f"[train] Balanced selection: {len(selected_major)} from majority, {len(minority_indices)} from minority → total {len(selected)}")
             # Apply selection to train_ds
             train_ds = train_ds.select(sorted(selected))
+
+            # After-balance counts (minority = target, majority = len(selected) - target)
+            after_norm = target if minority_label == 0 else len(selected) - target
+            after_abn = len(selected) - after_norm
+            sampling_meta["after"] = {"normal": after_norm, "abnormal": after_abn, "total": len(selected)}
+            sampling_meta["details"] = {"minority_label": minority_label, "majority_label": majority_label, "seed": args.seed}
         else:
             print("[train] Dataset already balanced or empty; using all samples.")
+            sampling_meta["after"] = sampling_meta["before"]
+
+        # Write sampling meta to output_dir
+        try:
+            os.makedirs(args.output_dir, exist_ok=True)
+            with open(os.path.join(args.output_dir, "train_sampling.json"), "w") as f:
+                _json.dump(sampling_meta, f, indent=2)
+        except Exception as e:
+            print(f"[WARN] Failed to write sampling meta: {e}")
+    else:
+        # 'all' mode: still record counts for reference
+        try:
+            labels_all = [LABEL2ID.get(gt, int(gt) if isinstance(gt, (int, np.integer)) else 0) for gt in list(train_ds["gt"]) ]  # type: ignore
+            n_norm_all = sum(1 for y in labels_all if y == 0)
+            n_abn_all = sum(1 for y in labels_all if y == 1)
+            meta_all = {"mode": "all", "counts": {"normal": n_norm_all, "abnormal": n_abn_all, "total": len(labels_all)}}
+            os.makedirs(args.output_dir, exist_ok=True)
+            with open(os.path.join(args.output_dir, "train_sampling.json"), "w") as f:
+                _json.dump(meta_all, f, indent=2)
+        except Exception as e:
+            print(f"[WARN] Failed to write sampling meta (all): {e}")
 
     def transform(batch):
         images = []
@@ -259,12 +295,17 @@ def main():
 
     # Evaluation/save strategy compatibility and schedule
     eval_enabled = False
+    eval_mode = "none"
     if eval_t is not None:
         interval = float(args.eval_interval)
         use_steps = False
         eval_steps_val = None
 
-        if interval < 1.0:
+        if interval <= 0.0:
+            # special case: every step
+            eval_steps_val = 1
+            use_steps = True
+        elif interval < 1.0:
             # fraction of an epoch → compute steps per epoch
             steps_per_epoch = max(1, math.ceil(len(train_ds) / max(1, args.batch_size)))
             eval_steps_val = max(1, int(round(steps_per_epoch * interval)))
@@ -287,6 +328,7 @@ def main():
             if "save_strategy" in ta_fields:
                 ta_kwargs["save_strategy"] = "steps"
             set_if("save_steps", eval_steps_val)
+            eval_mode = f"steps@{eval_steps_val}"
         else:
             if "evaluation_strategy" in ta_fields:
                 ta_kwargs["evaluation_strategy"] = "epoch"
@@ -296,11 +338,13 @@ def main():
                 eval_enabled = True
             if "save_strategy" in ta_fields:
                 ta_kwargs["save_strategy"] = "epoch"
+            eval_mode = "epoch"
 
         # Best model only if evaluation really enabled
         if eval_enabled:
             set_if("load_best_model_at_end", True)
-            set_if("metric_for_best_model", "f1")
+            set_if("metric_for_best_model", "accuracy")
+            set_if("greater_is_better", True)
     else:
         if "evaluation_strategy" in ta_fields:
             ta_kwargs["evaluation_strategy"] = "no"
@@ -313,6 +357,106 @@ def main():
 
     args_tr = TrainingArguments(**ta_kwargs)
 
+    # Debug print of evaluation schedule
+    try:
+        print(
+            "[train] Eval schedule:",
+            {
+                "enabled": eval_enabled,
+                "mode": eval_mode,
+                "eval_steps": getattr(args_tr, "eval_steps", None),
+                "save_strategy": getattr(args_tr, "save_strategy", None),
+                "evaluation_strategy": getattr(args_tr, "evaluation_strategy", None),
+            },
+        )
+    except Exception:
+        pass
+
+    # Stream eval metrics to JSONL after each evaluation; optionally track best manually
+    class EvalJsonlLogger(TrainerCallback):
+        def __init__(self, path: str, output_dir: str, processor, track_best: bool = False):
+            self.path = path
+            self.output_dir = output_dir
+            self.processor = processor
+            self.track_best = track_best
+            self.best_acc = None
+            self.best_step = None
+            self.model_ref = None
+            try:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            except Exception:
+                pass
+
+        def attach_model(self, model):
+            self.model_ref = model
+
+        def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+            try:
+                is_main = True
+                try:
+                    is_main = bool(getattr(state, "is_world_process_zero", True))
+                except Exception:
+                    pass
+                if not is_main:
+                    return
+                rec = {
+                    "event": "evaluate",
+                    "step": int(getattr(state, "global_step", 0) or 0),
+                    "epoch": float(getattr(state, "epoch", 0) or 0),
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "metrics": metrics or {},
+                }
+                with open(self.path, "a") as f:
+                    f.write(_json.dumps(rec) + "\n")
+
+                # Manual best-by-accuracy tracking if requested
+                if self.track_best:
+                    acc = None
+                    try:
+                        acc = metrics.get("eval_accuracy", None)
+                        if acc is None:
+                            acc = metrics.get("accuracy", None)
+                    except Exception:
+                        acc = None
+                    if acc is not None and (self.best_acc is None or acc > self.best_acc):
+                        self.best_acc = float(acc)
+                        self.best_step = int(getattr(state, "global_step", 0) or 0)
+                        try:
+                            best_dir = os.path.join(self.output_dir, "best")
+                            os.makedirs(best_dir, exist_ok=True)
+                            if self.model_ref is not None and hasattr(self.model_ref, "save_pretrained"):
+                                self.model_ref.save_pretrained(best_dir)
+                            self.processor.save_pretrained(best_dir)
+                            print(f"[train] Manual best updated @ step {self.best_step} (accuracy={self.best_acc:.4f}) → saved to {best_dir}")
+                        except Exception as e:
+                            print(f"[WARN] Failed to save manual best: {e}")
+            except Exception as e:
+                print(f"[WARN] EvalJsonlLogger failed: {e}")
+
+    eval_logger = EvalJsonlLogger(
+        os.path.join(args.output_dir, "eval_log.jsonl"), args.output_dir, processor, track_best=bool(eval_t is not None and not eval_enabled)
+    )
+    callbacks_list = [eval_logger]
+
+    # Fallback: if eval is not enabled via TrainingArguments (older transformers), force evaluation via callback
+    if eval_t is not None and not eval_enabled:
+        class ForceEvalCallback(TrainerCallback):
+            def __init__(self, every_steps: int):
+                self.every_steps = max(1, int(every_steps))
+
+            def on_step_end(self, args, state, control, **kwargs):
+                if state.global_step % self.every_steps == 0 and state.global_step > 0:
+                    control.should_evaluate = True
+                    control.should_save = True
+                return control
+
+        # If eval_steps_val is None (epoch-level), default to one epoch worth of steps
+        if eval_steps_val is None:
+            steps_per_epoch = max(1, math.ceil(len(train_ds) / max(1, args.batch_size)))
+            eval_steps_val = steps_per_epoch
+        callbacks_list.append(ForceEvalCallback(eval_steps_val))
+        print(f"[train] Using callback-forced evaluation every {eval_steps_val} steps (compat mode).")
+
     trainer = Trainer(
         model=model,
         args=args_tr,
@@ -320,12 +464,113 @@ def main():
         eval_dataset=eval_t,
         tokenizer=processor,
         compute_metrics=compute_metrics if eval_t is not None else None,
+        callbacks=callbacks_list,
     )
+
+    # Attach model reference for manual best saver
+    try:
+        eval_logger.attach_model(trainer.model)
+    except Exception:
+        pass
 
     trainer.train()
 
-    model.save_pretrained(args.output_dir)
+    # Always save the current (usually best if load_best_model_at_end) to output_dir
+    if hasattr(model, "save_pretrained"):
+        model.save_pretrained(args.output_dir)
     processor.save_pretrained(args.output_dir)
+
+    # Also persist explicit copies of best and last checkpoints if available
+    try:
+        best_ckpt = getattr(trainer.state, "best_model_checkpoint", None)
+        best_metric_val = getattr(trainer.state, "best_metric", None)
+        best_metric_name = None
+        # Try to get metric_for_best_model if present
+        try:
+            best_metric_name = getattr(args_tr, "metric_for_best_model", None)
+        except Exception:
+            best_metric_name = None
+        # Discover last checkpoint by step number
+        ckpts = []
+        for name in os.listdir(args.output_dir):
+            p = os.path.join(args.output_dir, name)
+            if os.path.isdir(p) and name.startswith("checkpoint-"):
+                try:
+                    step = int(name.split("-", 1)[1])
+                    ckpts.append((step, p))
+                except Exception:
+                    pass
+        last_ckpt = None
+        if ckpts:
+            ckpts.sort(key=lambda x: x[0])
+            last_ckpt = ckpts[-1][1]
+
+        # Save best to output_dir/best, last to output_dir/last
+        if best_ckpt:
+            best_dir = os.path.join(args.output_dir, "best")
+            os.makedirs(best_dir, exist_ok=True)
+            try:
+                best_model = AutoModelForImageClassification.from_pretrained(best_ckpt)
+                best_model.save_pretrained(best_dir)
+                processor.save_pretrained(best_dir)
+            except Exception as e:
+                print(f"[WARN] Could not materialize best checkpoint to {best_dir}: {e}")
+        else:
+            # If trainer didn't track best (older versions), but the logger did, write summary accordingly
+            if eval_logger.best_acc is not None:
+                best_metric_val = eval_logger.best_acc
+                best_metric_name = "accuracy"
+                best_ckpt = os.path.join(args.output_dir, "best")
+
+        if last_ckpt:
+            last_dir = os.path.join(args.output_dir, "last")
+            os.makedirs(last_dir, exist_ok=True)
+            try:
+                last_model = AutoModelForImageClassification.from_pretrained(last_ckpt)
+                last_model.save_pretrained(last_dir)
+                processor.save_pretrained(last_dir)
+            except Exception as e:
+                print(f"[WARN] Could not materialize last checkpoint to {last_dir}: {e}")
+        # Persist best summary + eval log history
+        try:
+            summary = {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "best_model_checkpoint": best_ckpt,
+                "best_metric_name": best_metric_name,
+                "best_metric_value": float(best_metric_val) if best_metric_val is not None else None,
+            }
+            # Attempt to derive best step from checkpoint name
+            try:
+                if best_ckpt and isinstance(best_ckpt, str) and "checkpoint-" in best_ckpt:
+                    summary["best_step"] = int(best_ckpt.rsplit("checkpoint-", 1)[-1])
+            except Exception:
+                pass
+            # Eval schedule hint (if available)
+            try:
+                summary["eval_schedule"] = {
+                    "enabled": eval_enabled,
+                    "mode": eval_mode,
+                    "eval_steps": getattr(args_tr, "eval_steps", None),
+                }
+            except Exception:
+                pass
+            with open(os.path.join(args.output_dir, "best_metrics.json"), "w") as f:
+                _json.dump(summary, f, indent=2)
+        except Exception as e:
+            print(f"[WARN] Could not write best_metrics.json: {e}")
+
+        try:
+            # Write evaluation history as JSONL (only eval entries) for audit
+            log_path = os.path.join(args.output_dir, "eval_log.jsonl")
+            with open(log_path, "w") as f:
+                for rec in getattr(trainer.state, "log_history", []) or []:
+                    if any(k.startswith("eval_") for k in rec.keys()):
+                        f.write(_json.dumps(rec) + "\n")
+        except Exception as e:
+            print(f"[WARN] Could not write eval_log.jsonl: {e}")
+
+    except Exception as e:
+        print(f"[WARN] Post-training checkpoint export failed: {e}")
 
     if eval_t is not None:
         metrics = trainer.evaluate(eval_dataset=eval_t)

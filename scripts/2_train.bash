@@ -18,7 +18,7 @@ EVAL_REPO="happy8825/siglip_test"   # set empty to disable
 EVAL_SPLIT="train"
 
 # Validation from eval repo (fraction)
-VAL_FROM_EVAL_PCT=0.2
+VAL_FROM_EVAL_PCT=1.0
 SEED=42
 
 # Logging/reporting: set REPORT_TO=wandb to enable W&B
@@ -27,10 +27,10 @@ WANDB_PROJECT="siglip_ecva" # used when REPORT_TO=wandb
 WANDB_RUN_NAME="siglip2-base-ecva"
 
 # Data sampling: all | balanced
-DATA_SAMPLE="all"
+DATA_SAMPLE="balanced"
 
 # Validation schedule: <1.0 fraction of epoch (e.g., 0.2), >1.0 every N steps, 1.0 every epoch
-EVAL_INTERVAL=1.0
+EVAL_INTERVAL=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
