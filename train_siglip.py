@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Dict, List
+import math
 
 import numpy as np
 from datasets import load_dataset
@@ -43,6 +44,7 @@ def parse_args():
     p.add_argument("--wandb_project", default=None, help="W&B project name when report_to=wandb")
     p.add_argument("--wandb_run_name", default=None, help="W&B run name when report_to=wandb")
     p.add_argument("--data_sample", choices=["all", "balanced"], default="all", help="Dataset sampling: 'all' uses all frames; 'balanced' downsamples the majority class evenly across source videos to match the minority count.")
+    p.add_argument("--eval_interval", type=float, default=1.0, help="Validation schedule: <1.0 means fraction of an epoch (e.g., 0.2); >1.0 means evaluate every N steps; exactly 1.0 means evaluate every epoch.")
     return p.parse_args()
 
 
@@ -255,17 +257,46 @@ def main():
     set_if("dataloader_num_workers", 4)
     set_if("fp16", True)
 
-    # Evaluation/save strategy compatibility (handle older transformers versions)
+    # Evaluation/save strategy compatibility and schedule
     eval_enabled = False
     if eval_t is not None:
-        if "evaluation_strategy" in ta_fields:
-            ta_kwargs["evaluation_strategy"] = "epoch"
-            eval_enabled = True
-        elif "evaluate_during_training" in ta_fields:
-            ta_kwargs["evaluate_during_training"] = True
-            eval_enabled = True
-        if "save_strategy" in ta_fields:
-            ta_kwargs["save_strategy"] = "epoch"
+        interval = float(args.eval_interval)
+        use_steps = False
+        eval_steps_val = None
+
+        if interval < 1.0:
+            # fraction of an epoch → compute steps per epoch
+            steps_per_epoch = max(1, math.ceil(len(train_ds) / max(1, args.batch_size)))
+            eval_steps_val = max(1, int(round(steps_per_epoch * interval)))
+            use_steps = True
+        elif interval > 1.0:
+            eval_steps_val = int(round(interval))
+            use_steps = True
+        else:  # exactly 1.0 → every epoch
+            use_steps = False
+
+        if use_steps:
+            if "evaluation_strategy" in ta_fields:
+                ta_kwargs["evaluation_strategy"] = "steps"
+                eval_enabled = True
+            elif "evaluate_during_training" in ta_fields:
+                ta_kwargs["evaluate_during_training"] = True
+                eval_enabled = True
+            set_if("eval_steps", eval_steps_val)
+            # Align save with eval to allow best model selection
+            if "save_strategy" in ta_fields:
+                ta_kwargs["save_strategy"] = "steps"
+            set_if("save_steps", eval_steps_val)
+        else:
+            if "evaluation_strategy" in ta_fields:
+                ta_kwargs["evaluation_strategy"] = "epoch"
+                eval_enabled = True
+            elif "evaluate_during_training" in ta_fields:
+                ta_kwargs["evaluate_during_training"] = True
+                eval_enabled = True
+            if "save_strategy" in ta_fields:
+                ta_kwargs["save_strategy"] = "epoch"
+
         # Best model only if evaluation really enabled
         if eval_enabled:
             set_if("load_best_model_at_end", True)

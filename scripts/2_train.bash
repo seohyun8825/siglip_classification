@@ -29,6 +29,9 @@ WANDB_RUN_NAME="siglip2-base-ecva"
 # Data sampling: all | balanced
 DATA_SAMPLE="all"
 
+# Validation schedule: <1.0 fraction of epoch (e.g., 0.2), >1.0 every N steps, 1.0 every epoch
+EVAL_INTERVAL=1.0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -48,4 +51,5 @@ python3 "$ROOT_DIR/train_siglip.py" \
   --report_to "$REPORT_TO" \
   --wandb_project "$WANDB_PROJECT" \
   --wandb_run_name "$WANDB_RUN_NAME" \
-  --data_sample "$DATA_SAMPLE"
+  --data_sample "$DATA_SAMPLE" \
+  --eval_interval "$EVAL_INTERVAL"
