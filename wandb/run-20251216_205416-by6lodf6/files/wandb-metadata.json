@@ -1,0 +1,123 @@
+{
+  "os":  "Linux-5.4.0-216-generic-x86_64-with-glibc2.31",
+  "python":  "CPython 3.10.19",
+  "startedAt":  "2025-12-16T11:54:16.071807Z",
+  "args":  [
+    "--train_repo",
+    "happy8825/siglip_train",
+    "--media_base",
+    "/hub_data4/seohyun",
+    "--output_dir",
+    "/hub_data3/seohyun/outputs/siglip_ecva",
+    "--epochs",
+    "3",
+    "--batch_size",
+    "32",
+    "--lr",
+    "5e-5",
+    "--model_name",
+    "google/siglip2-base-patch16-224",
+    "--train_split",
+    "train",
+    "--eval_repo",
+    "happy8825/siglip_test",
+    "--eval_split",
+    "train",
+    "--val_from_eval_pct",
+    "0.2",
+    "--seed",
+    "42",
+    "--report_to",
+    "wandb",
+    "--wandb_project",
+    "siglip_ecva",
+    "--wandb_run_name",
+    "siglip2-base-ecva",
+    "--data_sample",
+    "all"
+  ],
+  "program":  "/home/seohyun/vid_understanding/siglip_classification/train_siglip.py",
+  "codePath":  "train_siglip.py",
+  "codePathLocal":  "train_siglip.py",
+  "git":  {
+    "remote":  "git@github.com:seohyun8825/siglip_classification.git",
+    "commit":  "cf60829cadfb5f100ea1663203a4374d2cf1bb04"
+  },
+  "email":  "smart8825@naver.com",
+  "root":  "/home/seohyun/vid_understanding/siglip_classification",
+  "host":  "mlvgpu40",
+  "executable":  "/home/seohyun/.conda/envs/siglip/bin/python3",
+  "cpu_count":  128,
+  "cpu_count_logical":  255,
+  "gpu":  "NVIDIA RTX A6000",
+  "gpu_count":  8,
+  "disk":  {
+    "/":  {
+      "total":  "1837245689856",
+      "used":  "1721519632384"
+    }
+  },
+  "memory":  {
+    "total":  "1082000699392"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-4bfad73b-9097-67dc-da5e-1eff722c15f7"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-98ce6308-1327-ee2d-fe40-862483d73373"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-9467cf08-6658-520f-44b2-1f91518b99b1"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-fe43a746-2d73-ce27-760c-cb34425a5bdc"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-95affa97-e179-be3b-f834-18abc09f13a4"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-6095a410-396b-672b-5374-b7bb377be745"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-7d4038d5-2406-828e-b672-b5054507284a"
+    },
+    {
+      "name":  "NVIDIA RTX A6000",
+      "memoryTotal":  "51527024640",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-f9324829-728e-7430-409b-3990adb6ed64"
+    }
+  ],
+  "cudaVersion":  "12.2",
+  "writerId":  "vucbsqxndc2d3pal6ksf2pc2woccvh12"
+}

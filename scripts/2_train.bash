@@ -4,10 +4,10 @@ set -euo pipefail
 # Edit these values and run.
 
 TRAIN_REPO="happy8825/siglip_train"
-MEDIA_BASE="/hub_data3/seohyun"
+MEDIA_BASE="/hub_data4/seohyun"
 OUTPUT_DIR="/hub_data3/seohyun/outputs/siglip_ecva"
 
-EPOCHS=3
+EPOCHS=1
 BATCH_SIZE=32
 LR=5e-5
 MODEL_NAME="google/siglip2-base-patch16-224"
@@ -22,9 +22,12 @@ VAL_FROM_EVAL_PCT=0.2
 SEED=42
 
 # Logging/reporting: set REPORT_TO=wandb to enable W&B
-REPORT_TO="none"           # none | wandb
+REPORT_TO="wandb"           # none | wandb
 WANDB_PROJECT="siglip_ecva" # used when REPORT_TO=wandb
 WANDB_RUN_NAME="siglip2-base-ecva"
+
+# Data sampling: all | balanced
+DATA_SAMPLE="all"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -44,4 +47,5 @@ python3 "$ROOT_DIR/train_siglip.py" \
   --seed "$SEED" \
   --report_to "$REPORT_TO" \
   --wandb_project "$WANDB_PROJECT" \
-  --wandb_run_name "$WANDB_RUN_NAME"
+  --wandb_run_name "$WANDB_RUN_NAME" \
+  --data_sample "$DATA_SAMPLE"
