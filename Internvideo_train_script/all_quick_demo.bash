@@ -9,9 +9,9 @@ REPO_TR="happy8825/train_ecva_clean_no_tag"
 MEDIA_BASE="/hub_data3/seohyun"
 OUT_TR="/hub_data4/seohyun/video_frame_cache/train"
 # limits for quick demo
-LIMIT_TR=250
+LIMIT_TR=890
 FORMAT=npz
-BALANCED_TOTAL=250   # balanced subset (half per class)
+BALANCED_TOTAL=890   # balanced subset (half per class)
 python -u "$(dirname "$0")/../internvideo_cache.py" \
   --repo "${REPO_TR}" --split train --media_base "${MEDIA_BASE}" \
   --out_root "${OUT_TR}" --clip_len 16 --frame_size 224 --mode random \
@@ -56,7 +56,8 @@ CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-3} python -u "$(dirname "$0")/../in
   --output_dir "/hub_data4/seohyun/outputs/internvideo_ecva_demo" \
   --base_model "revliter/internvideo_next_large_p14_res224_f16" \
   --clip_len 16 --frame_size 224 --batch_size 1 --epochs ${EPOCHS_DEFAULT} \
-  --lr ${LR_DEFAULT} --num_workers 2 --val_ratio 0.0 --eval_interval 0 \
+  --lr ${LR_DEFAULT} --num_workers 2 --val_ratio 0.0 --eval_interval 20 \
+  --report_to wandb --wandb_project "${WANDB_PROJECT:-internvideo_ecva}" \
   --hidden "${HIDDEN_DEFAULT}" --dropout ${DROPOUT_DEFAULT} \
   --precision bf16 --weight_decay ${WD_DEFAULT} --warmup_ratio 0.05 --grad_clip 1.0 \
   --reader decord --mp_start spawn --progress_every 20 \
